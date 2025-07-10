@@ -1,8 +1,9 @@
 #include <Arduino.h>
+#include <WiFi.h>
+#include <WiFiManager.h>
 #include "fauxmoESP.h"
 
-// Define o nome do dispositivo para facilitar a identificação na rede
-#define DEVICE_NAME "ESP32-ALEXA" 
+#define DEVICE_NAME "ESP32-ALEXA"
 
 // --- Constantes para os IDs dos dispositivos virtuais ---
 #define ID_RELE1 "Relé 1"
@@ -13,6 +14,7 @@
 // --- Constantes para os pinos GPIO ---
 #define PIN_WIFI_LED 12 
 #define PIN_STATUS_LED 14
+#define PIN_WIFI_RESET_BUTTON 34 // <--- Botão para reset WiFi
 
 #define PIN_LED_OUT_1 27 
 #define PIN_LED_OUT_2 26 
@@ -36,18 +38,13 @@ fauxmoESP fauxmo;
 void wifiSetup();
 void set_out(uint8_t pin, bool state);
 
-/**
- * @brief Função de configuração do Arduino.
- * 
- * Inicializa a comunicação serial, configura os pinos GPIO,
- * conecta à rede Wi-Fi e configura os dispositivos virtuais com o FauxmoESP.
- */
 void setup() {
   Serial.begin(115200);
 
   // --- Configuração dos pinos GPIO ---
   pinMode(PIN_WIFI_LED, OUTPUT);
   pinMode(PIN_STATUS_LED, OUTPUT);
+  pinMode(PIN_WIFI_RESET_BUTTON, INPUT); // Botão no pino 34
 
   pinMode(PIN_LED_OUT_1, OUTPUT);
   pinMode(PIN_LED_OUT_2, OUTPUT);
@@ -59,22 +56,32 @@ void setup() {
   pinMode(PIN_OUT_3, OUTPUT);
   pinMode(PIN_OUT_4, OUTPUT);
 
-  // --- Configuração da conexão Wi-Fi ---
+  // --- Verifica se o botão de reset está pressionado no boot ---
+  if (digitalRead(PIN_WIFI_RESET_BUTTON) == LOW) { // Pressionado (gnd)
+    delay(5000);
+      if (digitalRead(PIN_WIFI_RESET_BUTTON) == LOW) { // Pressionado (gnd)
+        Serial.println("Botão de reset pressionado. Apagando configurações WiFi...");
+        WiFiManager wm;
+        wm.resetSettings(); // Apaga SSID e senha salvos
+        delay(1000);
+        ESP.restart();
+      }
+  }
+
+  // --- Conecta à rede Wi-Fi com WiFiManager ---
   wifiSetup();
   digitalWrite(PIN_WIFI_LED, HIGH);
 
   // --- Configuração do FauxmoESP ---
-  fauxmo.createServer(true); 
-  fauxmo.setPort(80);  
+  fauxmo.createServer(true);
+  fauxmo.setPort(80);
   fauxmo.enable(true);
 
-  // --- Adicionando dispositivos virtuais ---
   fauxmo.addDevice(ID_RELE1);
   fauxmo.addDevice(ID_RELE2);
   fauxmo.addDevice(ID_RELE3);
   fauxmo.addDevice(ID_RELE4);
 
-  // --- Configuração do callback para quando um dispositivo virtual é acionado ---
   fauxmo.onSetState([](unsigned char device_id, const char * device_name, bool state, unsigned char value) {
     Serial.printf("[MAIN] Device #%d (%s) state: %s value: %d\n", device_id, device_name, state ? "ON" : "OFF", value);
 
@@ -94,11 +101,6 @@ void setup() {
   });
 }
 
-/**
- * @brief Função de loop principal do Arduino.
- * 
- * Gerencia as requisições do FauxmoESP e atualiza o LED de status.
- */
 void loop() {  
   fauxmo.handle();
 
@@ -109,32 +111,22 @@ void loop() {
   }
 }
 
-/**
- * @brief Função para configurar e conectar o ESP32 à rede Wi-Fi.
- * 
- * Tenta se conectar à rede Wi-Fi com o SSID e senha especificados.
- * Se a conexão for bem-sucedida, imprime informações sobre a rede na serial.
- */
 void wifiSetup() {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin("SEU_SSID", "SUA_SENHA"); // Substitua pelo seu SSID e senha
+  WiFiManager wm;
 
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(100);
+  // Inicia o modo portal se necessário
+  bool res = wm.autoConnect("ESP32-Config");
+
+  if (!res) {
+    Serial.println("Falha na conexão. Reiniciando...");
+    ESP.restart();
   }
 
-  Serial.println("\nConexão Wi-Fi estabelecida!");
-  Serial.printf("SSID: %s\n", WiFi.SSID().c_str());
-  Serial.printf("Endereço IP: %s\n", WiFi.localIP().toString().c_str());
+  Serial.println("WiFi conectado com sucesso!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
 }
 
-/**
- * @brief Define o estado de um pino GPIO.
- * 
- * @param pin Número do pino GPIO.
- * @param state Estado desejado do pino (HIGH ou LOW).
- */
 void set_out(uint8_t pin, bool state) {
   digitalWrite(pin, state);
 }
